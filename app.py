@@ -4,7 +4,6 @@ import json
 import os
 import hashlib
 import requests
-import matplotlib
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
