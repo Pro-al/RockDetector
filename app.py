@@ -3,33 +3,34 @@ import pandas as pd
 import json
 import joblib
 import os
+import hashlib
+import requests
+import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-import hashlib
+from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
 
 # === Глобальные переменные ===
-USER_DB = "users.json"  # Файл базы пользователей
+USER_DB = "users.json"
 ML_MODEL_FILE = "ml_model.pkl"
 VECTOR_FILE = "vectorizer.pkl"
 FSTEC_DB_FILE = "fstec_db.json"
 DATASET_FILE = "vulnerability_dataset.csv"
+METRICS_FILE = "metrics.json"
 
-# === Модуль 1: Администрирование (управление пользователями) ===
+# === Функции работы с пользователями ===
 def load_users():
-    """Загрузка базы пользователей"""
     if not os.path.exists(USER_DB):
         return {}
     with open(USER_DB, "r", encoding="utf-8") as file:
         return json.load(file)
 
 def save_users(users):
-    """Сохранение базы пользователей"""
     with open(USER_DB, "w", encoding="utf-8") as file:
         json.dump(users, file, indent=4)
 
 def register_user(username, password):
-    """Регистрация нового пользователя"""
     users = load_users()
     if username in users:
         return "Пользователь уже существует"
@@ -38,15 +39,13 @@ def register_user(username, password):
     return "Регистрация успешна"
 
 def login_user(username, password):
-    """Авторизация пользователя"""
     users = load_users()
     if username in users and users[username] == hashlib.sha256(password.encode()).hexdigest():
         return True
     return False
 
-# === Модуль 2: Обучение модели машинного обучения ===
+# === Обучение модели ===
 def train_ml_model():
-    """Обучение модели для анализа уязвимостей"""
     st.subheader("Обучение модели")
     try:
         data = pd.read_csv(DATASET_FILE)
@@ -65,11 +64,30 @@ def train_ml_model():
     joblib.dump(model, ML_MODEL_FILE)
     joblib.dump(vectorizer, VECTOR_FILE)
 
+    # Оценка модели
+    y_pred = model.predict(X_test_tfidf)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+
+    # Сохранение метрик
+    metrics = {"precision": precision, "recall": recall, "f1_score": f1}
+    with open(METRICS_FILE, "w") as f:
+        json.dump(metrics, f)
+
+    # Визуализация Precision-Recall
+    precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
+    plt.figure()
+    plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.legend()
+    st.pyplot(plt)
+
     st.success("Модель обучена и сохранена!")
 
-# === Модуль 3: Эксплуатация (анализ загружаемого кода) ===
+# === Загрузка обученной модели ===
 def load_ml_model():
-    """Загрузка обученной модели"""
     try:
         model = joblib.load(ML_MODEL_FILE)
         vectorizer = joblib.load(VECTOR_FILE)
@@ -78,8 +96,8 @@ def load_ml_model():
         st.error("Обученная модель не найдена.")
         return None, None
 
+# === Анализ кода с помощью ML ===
 def analyze_code_with_ml(code_snippet):
-    """Анализ кода с помощью обученной модели"""
     model, vectorizer = load_ml_model()
     if model is None:
         return "Ошибка загрузки модели"
@@ -88,29 +106,47 @@ def analyze_code_with_ml(code_snippet):
     prediction = model.predict(vectorized_code)
     return "Обнаружена уязвимость" if prediction[0] == 1 else "Код безопасен"
 
-# === Модуль 4: Анализ исходного кода с БДУ ФСТЭК ===
+# === Работа с БДУ ФСТЭК ===
 def load_fstec_db():
-    """Загрузка базы данных уязвимостей ФСТЭК"""
     if not os.path.exists(FSTEC_DB_FILE):
         return []
     with open(FSTEC_DB_FILE, "r", encoding="utf-8") as file:
         return json.load(file)
 
 def compare_with_fstec(code_snippet):
-    """Сравнение кода с известными уязвимостями из БДУ ФСТЭК"""
     fstec_db = load_fstec_db()
+    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
     for vuln in fstec_db:
-        if vuln["pattern"] in code_snippet:
+        if vuln["hash"] == code_hash:
             return f"Совпадение с БДУ ФСТЭК: {vuln['description']}"
     return "Совпадений с БДУ ФСТЭК не найдено"
+
+def update_fstec_db():
+    st.subheader("Обновление базы данных уязвимостей ФСТЭК")
+    api_url = st.text_input("Введите API-адрес для загрузки базы ФСТЭК")
+
+    if st.button("Обновить базу"):
+        try:
+            response = requests.get(api_url)
+            if response.status_code == 200:
+                new_db = response.json()
+                for vuln in new_db:
+                    vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
+                with open(FSTEC_DB_FILE, "w", encoding="utf-8") as file:
+                    json.dump(new_db, file, indent=4)
+                st.success("База данных ФСТЭК обновлена!")
+            else:
+                st.error("Ошибка загрузки базы")
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
 
 # === Интерфейс Streamlit ===
 def main():
     st.title("Система анализа уязвимостей")
 
-    menu = st.sidebar.radio("Выберите модуль", ["Администрирование", "Обучение", "Эксплуатация", "Анализ кода"])
+    menu = st.sidebar.radio("Выберите модуль", ["Администрирование", "Обучение", "Эксплуатация", "Анализ кода", "Обновление ФСТЭК"])
 
-    # === Администрирование (вход в систему) ===
+    # === Администрирование ===
     if menu == "Администрирование":
         st.subheader("Управление пользователями")
         choice = st.radio("Выберите действие", ["Вход", "Регистрация"])
@@ -134,7 +170,7 @@ def main():
     elif menu == "Обучение":
         train_ml_model()
 
-    # === Эксплуатация (анализ загружаемого кода) ===
+    # === Эксплуатация (анализ кода) ===
     elif menu == "Эксплуатация":
         st.subheader("Анализ загруженного кода")
         uploaded_file = st.file_uploader("Загрузите файл кода", type=["py", "java", "js", "c", "cpp"])
@@ -144,7 +180,7 @@ def main():
             result = analyze_code_with_ml(code_snippet)
             st.write("Результат анализа:", result)
 
-    # === Анализ исходного кода с БДУ ФСТЭК ===
+    # === Анализ с БДУ ФСТЭК ===
     elif menu == "Анализ кода":
         st.subheader("Анализ кода с БДУ ФСТЭК")
         code_input = st.text_area("Введите фрагмент кода для анализа")
@@ -153,6 +189,9 @@ def main():
             result = compare_with_fstec(code_input)
             st.write("Результат:", result)
 
+    # === Обновление БДУ ФСТЭК ===
+    elif menu == "Обновление ФСТЭК":
+        update_fstec_db()
+
 if __name__ == "__main__":
     main()
-
