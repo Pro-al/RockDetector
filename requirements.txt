@@ -1,1 +1,6 @@
+scikit-learn
+joblib
+matplotlib
 streamlit
+pandas
+requests
