@@ -5,6 +5,18 @@ import os
 import hashlib
 import requests
 
+# Попытка импорта необходимых библиотек с обработкой ошибок
+try:
+    import matplotlib.pyplot as plt
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
+    import joblib
+except ImportError as e:
+    st.error(f"Ошибка импорта: {e}. Убедитесь, что установлены все необходимые библиотеки.")
+    st.stop()  # Останавливаем выполнение, если не удалось импортировать библиотеки
+
 # === Глобальные переменные ===
 USER_DB = "users.json"
 ML_MODEL_FILE = "ml_model.pkl"
@@ -12,32 +24,6 @@ VECTOR_FILE = "vectorizer.pkl"
 FSTEC_DB_FILE = "fstec_db.json"
 DATASET_FILE = "vulnerability_dataset.csv"
 METRICS_FILE = "metrics.json"
-
-# === Проверка наличия необходимых библиотек ===
-try:
-    import sklearn
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
-    SKLEARN_INSTALLED = True
-except ImportError:
-    SKLEARN_INSTALLED = False
-    st.error("Модуль 'scikit-learn' не установлен. Установите его для использования машинного обучения.")
-
-try:
-    import joblib
-    JOBLIB_INSTALLED = True
-except ImportError:
-    JOBLIB_INSTALLED = False
-    st.error("Модуль 'joblib' не установлен. Установите его для сохранения модели.")
-
-try:
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_INSTALLED = True
-except ImportError:
-    MATPLOTLIB_INSTALLED = False
-    st.error("Модуль 'matplotlib' не установлен. Установите его для визуализации.")
 
 # === Функции работы с пользователями ===
 def load_users():
@@ -67,11 +53,6 @@ def login_user(username, password):
 # === Обучение модели ===
 def train_ml_model():
     st.subheader("Обучение модели")
-
-    if not SKLEARN_INSTALLED:
-        st.error("Модуль 'scikit-learn' не установлен. Установите его для использования машинного обучения.")
-        return
-
     try:
         data = pd.read_csv(DATASET_FILE)
     except FileNotFoundError:
@@ -86,45 +67,33 @@ def train_ml_model():
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train_tfidf, y_train)
 
-    if JOBLIB_INSTALLED:
-        joblib.dump(model, ML_MODEL_FILE)
-        joblib.dump(vectorizer, VECTOR_FILE)
-    else:
-        st.error("Модуль 'joblib' не установлен. Установите его для сохранения модели.")
+    joblib.dump(model, ML_MODEL_FILE)
+    joblib.dump(vectorizer, VECTOR_FILE)
 
+    # Оценка модели
     y_pred = model.predict(X_test_tfidf)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
 
+    # Сохранение метрик
     metrics = {"precision": precision, "recall": recall, "f1_score": f1}
     with open(METRICS_FILE, "w") as f:
         json.dump(metrics, f)
 
     # Визуализация Precision-Recall
-    if MATPLOTLIB_INSTALLED:
-        precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
-        plt.figure()
-        plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
-        plt.xlabel('Recall')
-        plt.ylabel('Precision')
-        plt.legend()
-        st.pyplot(plt)
-    else:
-        st.warning("Для визуализации графиков требуется библиотека matplotlib.")
+    precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
+    plt.figure()
+    plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.legend()
+    st.pyplot(plt)
 
     st.success("Модель обучена и сохранена!")
 
 # === Загрузка обученной модели ===
 def load_ml_model():
-    if not SKLEARN_INSTALLED:
-        st.error("Модуль 'scikit-learn' не установлен. Установите его для загрузки модели.")
-        return None, None
-
-    if not JOBLIB_INSTALLED:
-        st.error("Модуль 'joblib' не установлен. Установите его для загрузки модели.")
-        return None, None
-
     try:
         model = joblib.load(ML_MODEL_FILE)
         vectorizer = joblib.load(VECTOR_FILE)
