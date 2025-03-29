@@ -4,7 +4,14 @@ import json
 import os
 import hashlib
 import requests
-import joblib
+
+# Try importing joblib, and provide an error message if it's missing
+try:
+    import joblib
+    JOBLIB_INSTALLED = True
+except ImportError:
+    JOBLIB_INSTALLED = False
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -67,9 +74,12 @@ def train_ml_model():
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train_tfidf, y_train)
 
-    # Сохранение модели и векторизатора
-    joblib.dump(model, ML_MODEL_FILE)
-    joblib.dump(vectorizer, VECTOR_FILE)
+    # Check if joblib is available for saving the model
+    if JOBLIB_INSTALLED:
+        joblib.dump(model, ML_MODEL_FILE)
+        joblib.dump(vectorizer, VECTOR_FILE)
+    else:
+        st.error("Модуль 'joblib' не установлен. Установите его для сохранения модели.")
 
     # Оценка модели
     y_pred = model.predict(X_test_tfidf)
@@ -98,6 +108,10 @@ def train_ml_model():
 
 # === Загрузка обученной модели ===
 def load_ml_model():
+    if not JOBLIB_INSTALLED:
+        st.error("Модуль 'joblib' не установлен. Установите его для загрузки модели.")
+        return None, None
+
     try:
         model = joblib.load(ML_MODEL_FILE)
         vectorizer = joblib.load(VECTOR_FILE)
@@ -205,4 +219,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
