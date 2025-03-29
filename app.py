@@ -4,8 +4,8 @@ import json
 import os
 import hashlib
 import requests
+import matplotlib
 import matplotlib.pyplot as plt
-pip install matplotlib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
