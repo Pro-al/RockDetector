@@ -4,12 +4,18 @@ import json
 import os
 import hashlib
 import requests
-import matplotlib.pyplot as plt
-import matplotlib
+import joblib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
+
+# Try importing matplotlib, and provide an error message if it's missing
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_INSTALLED = True
+except ImportError:
+    MATPLOTLIB_INSTALLED = False
 
 # === Глобальные переменные ===
 USER_DB = "users.json"
@@ -61,6 +67,7 @@ def train_ml_model():
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train_tfidf, y_train)
 
+    # Сохранение модели и векторизатора
     joblib.dump(model, ML_MODEL_FILE)
     joblib.dump(vectorizer, VECTOR_FILE)
 
@@ -75,14 +82,17 @@ def train_ml_model():
     with open(METRICS_FILE, "w") as f:
         json.dump(metrics, f)
 
-    # Визуализация Precision-Recall
-    precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
-    plt.figure()
-    plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.legend()
-    st.pyplot(plt)
+    # Визуализация Precision-Recall (если matplotlib установлен)
+    if MATPLOTLIB_INSTALLED:
+        precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
+        plt.figure()
+        plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.legend()
+        st.pyplot(plt)
+    else:
+        st.warning("Для визуализации графиков требуется библиотека matplotlib.")
 
     st.success("Модель обучена и сохранена!")
 
@@ -195,3 +205,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
