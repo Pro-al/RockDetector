@@ -5,6 +5,7 @@ import os
 import hashlib
 import requests
 import matplotlib.pyplot as plt
+import matplotlib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
