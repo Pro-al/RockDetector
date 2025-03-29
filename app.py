@@ -5,7 +5,7 @@ import os
 import hashlib
 import requests
 
-# Try importing scikit-learn (sklearn), and provide an error message if it's missing
+# Проверка наличия библиотеки scikit-learn
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.ensemble import RandomForestClassifier
@@ -14,20 +14,23 @@ try:
     SKLEARN_INSTALLED = True
 except ImportError:
     SKLEARN_INSTALLED = False
+    st.error("Модуль 'scikit-learn' не установлен. Установите его для использования машинного обучения.")
 
-# Try importing joblib, and provide an error message if it's missing
+# Проверка наличия библиотеки joblib
 try:
     import joblib
     JOBLIB_INSTALLED = True
 except ImportError:
     JOBLIB_INSTALLED = False
+    st.error("Модуль 'joblib' не установлен. Установите его для сохранения модели.")
 
-# Try importing matplotlib, and provide an error message if it's missing
+# Проверка наличия библиотеки matplotlib
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_INSTALLED = True
 except ImportError:
     MATPLOTLIB_INSTALLED = False
+    st.error("Модуль 'matplotlib' не установлен. Установите его для визуализации.")
 
 # === Глобальные переменные ===
 USER_DB = "users.json"
@@ -66,11 +69,11 @@ def login_user(username, password):
 def train_ml_model():
     st.subheader("Обучение модели")
     
-    # Check if scikit-learn is installed
+    # Если scikit-learn не установлен, остановим выполнение функции
     if not SKLEARN_INSTALLED:
         st.error("Модуль 'scikit-learn' не установлен. Установите его для использования машинного обучения.")
         return
-
+    
     try:
         data = pd.read_csv(DATASET_FILE)
     except FileNotFoundError:
@@ -85,7 +88,7 @@ def train_ml_model():
     model = RandomForestClassifier(n_estimators=100)
     model.fit(X_train_tfidf, y_train)
 
-    # Check if joblib is available for saving the model
+    # Если joblib установлен, сохраняем модель
     if JOBLIB_INSTALLED:
         joblib.dump(model, ML_MODEL_FILE)
         joblib.dump(vectorizer, VECTOR_FILE)
@@ -119,11 +122,12 @@ def train_ml_model():
 
 # === Загрузка обученной модели ===
 def load_ml_model():
-    # Check if scikit-learn is installed
+    # Если scikit-learn не установлен, остановим выполнение функции
     if not SKLEARN_INSTALLED:
         st.error("Модуль 'scikit-learn' не установлен. Установите его для загрузки модели.")
         return None, None
 
+    # Если joblib не установлен, остановим выполнение функции
     if not JOBLIB_INSTALLED:
         st.error("Модуль 'joblib' не установлен. Установите его для загрузки модели.")
         return None, None
@@ -235,4 +239,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
