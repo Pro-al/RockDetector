@@ -5,17 +5,22 @@ import os
 import hashlib
 import requests
 
+# Try importing scikit-learn (sklearn), and provide an error message if it's missing
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
+    SKLEARN_INSTALLED = True
+except ImportError:
+    SKLEARN_INSTALLED = False
+
 # Try importing joblib, and provide an error message if it's missing
 try:
     import joblib
     JOBLIB_INSTALLED = True
 except ImportError:
     JOBLIB_INSTALLED = False
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
 
 # Try importing matplotlib, and provide an error message if it's missing
 try:
@@ -60,6 +65,12 @@ def login_user(username, password):
 # === Обучение модели ===
 def train_ml_model():
     st.subheader("Обучение модели")
+    
+    # Check if scikit-learn is installed
+    if not SKLEARN_INSTALLED:
+        st.error("Модуль 'scikit-learn' не установлен. Установите его для использования машинного обучения.")
+        return
+
     try:
         data = pd.read_csv(DATASET_FILE)
     except FileNotFoundError:
@@ -108,6 +119,11 @@ def train_ml_model():
 
 # === Загрузка обученной модели ===
 def load_ml_model():
+    # Check if scikit-learn is installed
+    if not SKLEARN_INSTALLED:
+        st.error("Модуль 'scikit-learn' не установлен. Установите его для загрузки модели.")
+        return None, None
+
     if not JOBLIB_INSTALLED:
         st.error("Модуль 'joblib' не установлен. Установите его для загрузки модели.")
         return None, None
@@ -219,3 +235,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
