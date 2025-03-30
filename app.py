@@ -13,12 +13,10 @@ try:
     from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
     import joblib
 except ImportError as e:
-    st.error(f"Ошибка импорта: {e}. Убедитесь, что установлены все библиотеки.")
-    st.write("Чтобы установить их, выполните:")
-    st.code("pip install scikit-learn joblib matplotlib")
+    st.error(f"Ошибка импорта: {e}. Установите библиотеки: `pip install scikit-learn joblib matplotlib`")
     st.stop()
 
-# === Глобальные переменные ===
+# === Файлы ===
 USER_DB = "users.json"
 ML_MODEL_FILE = "ml_model.pkl"
 VECTOR_FILE = "vectorizer.pkl"
@@ -26,16 +24,12 @@ FSTEC_DB_FILE = "fstec_db.json"
 DATASET_FILE = "vulnerability_dataset.csv"
 METRICS_FILE = "metrics.json"
 
-# === Функции работы с пользователями ===
+# === Работа с пользователями ===
 def load_users():
-    if not os.path.exists(USER_DB):
-        return {}
-    with open(USER_DB, "r", encoding="utf-8") as file:
-        return json.load(file)
+    return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
 def save_users(users):
-    with open(USER_DB, "w", encoding="utf-8") as file:
-        json.dump(users, file, indent=4)
+    json.dump(users, open(USER_DB, "w", encoding="utf-8"), indent=4)
 
 def register_user(username, password):
     users = load_users()
@@ -47,9 +41,7 @@ def register_user(username, password):
 
 def login_user(username, password):
     users = load_users()
-    if username in users and users[username] == hashlib.sha256(password.encode()).hexdigest():
-        return True
-    return False
+    return username in users and users[username] == hashlib.sha256(password.encode()).hexdigest()
 
 # === Обучение модели ===
 def train_ml_model():
@@ -60,11 +52,12 @@ def train_ml_model():
         st.error("Файл датасета не найден.")
         return
 
-    # Проверяем, есть ли оба класса в датасете
-    st.write("Распределение классов:", data["label"].value_counts())
+    # Удаляем редкие классы (< 2 записей)
+    class_counts = data["label"].value_counts()
+    data = data[data["label"].isin(class_counts[class_counts >= 2].index)]
 
     if data["label"].nunique() < 2:
-        st.error("Ошибка: В датасете только один класс. Добавьте примеры другого класса.")
+        st.error("Ошибка: В датасете только один класс. Добавьте данные.")
         return
     
     X_train, X_test, y_train, y_test = train_test_split(
@@ -87,15 +80,11 @@ def train_ml_model():
     recall = recall_score(y_test, y_pred)
     f1 = f1_score(y_test, y_pred)
 
-    metrics = {"precision": precision, "recall": recall, "f1_score": f1}
-    with open(METRICS_FILE, "w") as f:
-        json.dump(metrics, f)
+    json.dump({"precision": precision, "recall": recall, "f1_score": f1}, open(METRICS_FILE, "w"))
 
-    # Визуализация Precision-Recall
-    y_proba = model.predict_proba(X_test_tfidf)
-
-    if y_proba.shape[1] > 1:
-        precision_vals, recall_vals, _ = precision_recall_curve(y_test, y_proba[:, 1])
+    # Визуализация Precision-Recall (если есть 2 класса)
+    if model.n_classes_ > 1:
+        precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
         plt.figure()
         plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
         plt.xlabel('Recall')
@@ -103,16 +92,14 @@ def train_ml_model():
         plt.legend()
         st.pyplot(plt)
     else:
-        st.warning("Невозможно построить PR-кривую, так как модель обучена на одном классе.")
+        st.warning("Невозможно построить PR-кривую (1 класс).")
 
     st.success("Модель обучена и сохранена!")
 
-# === Загрузка обученной модели ===
+# === Загрузка модели ===
 def load_ml_model():
     try:
-        model = joblib.load(ML_MODEL_FILE)
-        vectorizer = joblib.load(VECTOR_FILE)
-        return model, vectorizer
+        return joblib.load(ML_MODEL_FILE), joblib.load(VECTOR_FILE)
     except FileNotFoundError:
         st.error("Обученная модель не найдена.")
         return None, None
@@ -124,14 +111,43 @@ def analyze_code_with_ml(code_snippet):
         return "Ошибка загрузки модели"
     
     vectorized_code = vectorizer.transform([code_snippet])
-    prediction = model.predict(vectorized_code)
-    return "Обнаружена уязвимость" if prediction[0] == 1 else "Код безопасен"
+    return "Обнаружена уязвимость" if model.predict(vectorized_code)[0] == 1 else "Код безопасен"
+
+# === Работа с БДУ ФСТЭК ===
+def load_fstec_db():
+    return json.load(open(FSTEC_DB_FILE, "r", encoding="utf-8")) if os.path.exists(FSTEC_DB_FILE) else []
+
+def compare_with_fstec(code_snippet):
+    fstec_db = load_fstec_db()
+    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
+    for vuln in fstec_db:
+        if vuln.get("hash") == code_hash:
+            return f"Совпадение с БДУ ФСТЭК: {vuln['description']}"
+    return "Совпадений с БДУ ФСТЭК не найдено"
+
+def update_fstec_db():
+    st.subheader("Обновление БДУ ФСТЭК")
+    api_url = st.text_input("Введите API-адрес")
+
+    if st.button("Обновить базу"):
+        try:
+            response = requests.get(api_url)
+            if response.status_code == 200:
+                new_db = response.json()
+                for vuln in new_db:
+                    vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
+                json.dump(new_db, open(FSTEC_DB_FILE, "w", encoding="utf-8"), indent=4)
+                st.success("База ФСТЭК обновлена!")
+            else:
+                st.error("Ошибка загрузки базы")
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
 
 # === Интерфейс Streamlit ===
 def main():
     st.title("Система анализа уязвимостей")
 
-    menu = st.sidebar.radio("Выберите модуль", ["Администрирование", "Обучение", "Эксплуатация"])
+    menu = st.sidebar.radio("Выберите модуль", ["Администрирование", "Обучение", "Эксплуатация", "Анализ кода", "Обновление ФСТЭК"])
 
     if menu == "Администрирование":
         st.subheader("Управление пользователями")
@@ -140,30 +156,29 @@ def main():
         username = st.text_input("Логин")
         password = st.text_input("Пароль", type="password")
 
-        if choice == "Регистрация":
-            if st.button("Зарегистрироваться"):
-                result = register_user(username, password)
-                st.success(result)
+        if choice == "Регистрация" and st.button("Зарегистрироваться"):
+            st.success(register_user(username, password))
 
-        elif choice == "Вход":
-            if st.button("Войти"):
-                if login_user(username, password):
-                    st.success("Успешный вход")
-                else:
-                    st.error("Неверные учетные данные")
+        if choice == "Вход" and st.button("Войти"):
+            st.success("Успешный вход") if login_user(username, password) else st.error("Неверные данные")
 
     elif menu == "Обучение":
         train_ml_model()
 
     elif menu == "Эксплуатация":
-        st.subheader("Анализ загруженного кода")
-        uploaded_file = st.file_uploader("Загрузите файл кода", type=["py", "java", "js", "c", "cpp"])
-        
+        uploaded_file = st.file_uploader("Загрузите файл кода")
         if uploaded_file:
-            code_snippet = uploaded_file.read().decode("utf-8")
-            result = analyze_code_with_ml(code_snippet)
-            st.write("Результат анализа:", result)
+            st.write("Результат анализа:", analyze_code_with_ml(uploaded_file.read().decode("utf-8")))
+
+    elif menu == "Анализ кода":
+        code_input = st.text_area("Введите код")
+        if st.button("Анализировать"):
+            st.write("Результат:", compare_with_fstec(code_input))
+
+    elif menu == "Обновление ФСТЭК":
+        update_fstec_db()
 
 if __name__ == "__main__":
     main()
+
      
