@@ -1,12 +1,8 @@
 [
-  {
-    "cve_id": "CVE-2023-1234",
-    "description": "SQL-инъекция в веб-приложении",
-    "severity": "Высокий"
-  },
-  {
-    "cve_id": "CVE-2022-5678",
-    "description": "Переполнение буфера в библиотеке OpenSSL",
-    "severity": "Критический"
-  }
+    {
+        "hash": "2f2b8a5d5f3e4e8b8b9f3e8a5d2b4f3e",
+        "description": "SQL-инъекция в веб-приложении",
+        "CVE": "CVE-2023-1234",
+        "severity": "Высокий"
+    }
 ]
