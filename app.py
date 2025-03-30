@@ -29,7 +29,8 @@ def load_users():
     return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
 def save_users(users):
-    json.dump(users, open(USER_DB, "w", encoding="utf-8"), indent=4)
+    with open(USER_DB, "w", encoding="utf-8") as file:
+        json.dump(users, file, indent=4)
 
 def register_user(username, password):
     users = load_users()
@@ -76,14 +77,14 @@ def train_ml_model():
 
     # Оценка модели
     y_pred = model.predict(X_test_tfidf)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, zero_division=1)
+    recall = recall_score(y_test, y_pred, zero_division=1)
+    f1 = f1_score(y_test, y_pred, zero_division=1)
 
     json.dump({"precision": precision, "recall": recall, "f1_score": f1}, open(METRICS_FILE, "w"))
 
     # Визуализация Precision-Recall (если есть 2 класса)
-    if model.n_classes_ > 1:
+    if len(set(y_test)) > 1:
         precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
         plt.figure()
         plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
@@ -119,10 +120,13 @@ def load_fstec_db():
 
 def compare_with_fstec(code_snippet):
     fstec_db = load_fstec_db()
-    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
+    if not fstec_db:
+        return "База данных ФСТЭК пуста."
+
     for vuln in fstec_db:
-        if vuln.get("hash") == code_hash:
-            return f"Совпадение с БДУ ФСТЭК: {vuln['description']}"
+        if vuln["pattern"] in code_snippet:
+            return f"Совпадение с БДУ ФСТЭК найдено:\nУязвимость: {vuln['description']}\nCVE: {vuln['cve_id']}\nСерьезность: {vuln['severity']}"
+    
     return "Совпадений с БДУ ФСТЭК не найдено"
 
 def update_fstec_db():
@@ -130,18 +134,28 @@ def update_fstec_db():
     api_url = st.text_input("Введите API-адрес")
 
     if st.button("Обновить базу"):
+        if not api_url.startswith("http"):
+            st.error("Ошибка: Неверный формат API-адреса.")
+            return
+
         try:
-            response = requests.get(api_url)
-            if response.status_code == 200:
-                new_db = response.json()
-                for vuln in new_db:
-                    vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
-                json.dump(new_db, open(FSTEC_DB_FILE, "w", encoding="utf-8"), indent=4)
-                st.success("База ФСТЭК обновлена!")
-            else:
-                st.error("Ошибка загрузки базы")
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
+            response = requests.get(api_url, timeout=10)
+            if response.status_code != 200:
+                st.error(f"Ошибка: Сервер вернул код {response.status_code}")
+                return
+
+            new_db = response.json()
+            if not isinstance(new_db, list):
+                st.error("Ошибка: Ожидался список уязвимостей в формате JSON.")
+                return
+
+            with open(FSTEC_DB_FILE, "w", encoding="utf-8") as file:
+                json.dump(new_db, file, indent=4, ensure_ascii=False)
+
+            st.success("База ФСТЭК успешно обновлена!")
+
+        except requests.exceptions.RequestException as e:
+            st.error(f"Ошибка запроса к API: {e}")
 
 # === Интерфейс Streamlit ===
 def main():
@@ -168,7 +182,7 @@ def main():
     elif menu == "Эксплуатация":
         uploaded_file = st.file_uploader("Загрузите файл кода")
         if uploaded_file:
-            st.write("Результат анализа:", analyze_code_with_ml(uploaded_file.read().decode("utf-8")))
+            st.write("Результат анализа:", analyze_code_with_ml(uploaded_file.read().decode(errors="ignore")))
 
     elif menu == "Анализ кода":
         code_input = st.text_area("Введите код")
@@ -180,5 +194,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-     
