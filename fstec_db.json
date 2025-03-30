@@ -2,11 +2,15 @@
     {
         "cve_id": "CVE-2023-1234",
         "description": "SQL-инъекция в веб-приложении",
-        "severity": "Высокий"
+        "severity": "Высокий",
+        "pattern": "SELECT * FROM users WHERE name = '" + user_input + "'",
+        "hash": "f2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2"
     },
     {
         "cve_id": "CVE-2022-5678",
         "description": "Переполнение буфера в библиотеке OpenSSL",
-        "severity": "Критический"
+        "severity": "Критический",
+        "pattern": "strcpy(buffer, user_input);",
+        "hash": "e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3"
     }
 ]
