@@ -114,14 +114,24 @@ def load_fstec_db():
 
 def compare_with_fstec(code_snippet):
     fstec_db = load_fstec_db()
-    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
+    code_lower = code_snippet.lower()
 
+    # Проверка по хэшу
+    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
     for vuln in fstec_db:
         if vuln.get("hash") == code_hash:
             return f"**Совпадение с БДУ ФСТЭК найдено:**\n\n" \
                    f"**Уязвимость:** {vuln['description']}\n" \
                    f"**CVE:** {vuln['CVE']}\n" \
                    f"**Серьезность:** {vuln['severity']}"
+
+    # Проверка на SQL-инъекции по ключевым словам
+    sql_patterns = ["select * from", "union select", "drop table", "insert into", "update set", "delete from", "--", "' or '1'='1"]
+    for pattern in sql_patterns:
+        if pattern in code_lower:
+            return "**Обнаружена потенциальная уязвимость: SQL-инъекция**\n\n" \
+                   "❗ Этот код содержит SQL-запросы, которые могут быть уязвимы.\n" \
+                   "**Рекомендация:** Используйте параметризованные запросы для безопасности."
 
     return "Совпадений с БДУ ФСТЭК не найдено"
 
