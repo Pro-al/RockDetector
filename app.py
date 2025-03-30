@@ -4,6 +4,7 @@ import json
 import os
 import hashlib
 import requests
+import joblib
 
 try:
     import matplotlib.pyplot as plt
@@ -11,9 +12,8 @@ try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
-    import joblib
 except ImportError as e:
-    st.error(f"Ошибка импорта: {e}. Установите библиотеки: `pip install scikit-learn joblib matplotlib`")
+    st.error(f"Ошибка импорта: {e}. Установите библиотеки: `pip install scikit-learn joblib matplotlib requests`")
     st.stop()
 
 # === Файлы ===
@@ -24,13 +24,12 @@ FSTEC_DB_FILE = "fstec_db.json"
 DATASET_FILE = "vulnerability_dataset.csv"
 METRICS_FILE = "metrics.json"
 
-# === Работа с пользователями ===
+# === Функции пользователей ===
 def load_users():
     return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
 def save_users(users):
-    with open(USER_DB, "w", encoding="utf-8") as file:
-        json.dump(users, file, indent=4)
+    json.dump(users, open(USER_DB, "w", encoding="utf-8"), indent=4)
 
 def register_user(username, password):
     users = load_users()
@@ -53,7 +52,6 @@ def train_ml_model():
         st.error("Файл датасета не найден.")
         return
 
-    # Удаляем редкие классы (< 2 записей)
     class_counts = data["label"].value_counts()
     data = data[data["label"].isin(class_counts[class_counts >= 2].index)]
 
@@ -75,16 +73,14 @@ def train_ml_model():
     joblib.dump(model, ML_MODEL_FILE)
     joblib.dump(vectorizer, VECTOR_FILE)
 
-    # Оценка модели
     y_pred = model.predict(X_test_tfidf)
-    precision = precision_score(y_test, y_pred, zero_division=1)
-    recall = recall_score(y_test, y_pred, zero_division=1)
-    f1 = f1_score(y_test, y_pred, zero_division=1)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
 
     json.dump({"precision": precision, "recall": recall, "f1_score": f1}, open(METRICS_FILE, "w"))
 
-    # Визуализация Precision-Recall (если есть 2 класса)
-    if len(set(y_test)) > 1:
+    if model.n_classes_ > 1:
         precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
         plt.figure()
         plt.plot(recall_vals, precision_vals, marker='.', label='PR-кривая')
@@ -97,7 +93,7 @@ def train_ml_model():
 
     st.success("Модель обучена и сохранена!")
 
-# === Загрузка модели ===
+# === Анализ кода ===
 def load_ml_model():
     try:
         return joblib.load(ML_MODEL_FILE), joblib.load(VECTOR_FILE)
@@ -105,7 +101,6 @@ def load_ml_model():
         st.error("Обученная модель не найдена.")
         return None, None
 
-# === Анализ кода ===
 def analyze_code_with_ml(code_snippet):
     model, vectorizer = load_ml_model()
     if model is None:
@@ -114,48 +109,49 @@ def analyze_code_with_ml(code_snippet):
     vectorized_code = vectorizer.transform([code_snippet])
     return "Обнаружена уязвимость" if model.predict(vectorized_code)[0] == 1 else "Код безопасен"
 
-# === Работа с БДУ ФСТЭК ===
+# === БД ФСТЭК ===
 def load_fstec_db():
     return json.load(open(FSTEC_DB_FILE, "r", encoding="utf-8")) if os.path.exists(FSTEC_DB_FILE) else []
 
 def compare_with_fstec(code_snippet):
     fstec_db = load_fstec_db()
-    if not fstec_db:
-        return "База данных ФСТЭК пуста."
-
+    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
     for vuln in fstec_db:
-        if vuln["pattern"] in code_snippet:
-            return f"Совпадение с БДУ ФСТЭК найдено:\nУязвимость: {vuln['description']}\nCVE: {vuln['cve_id']}\nСерьезность: {vuln['severity']}"
-    
+        if vuln.get("hash") == code_hash:
+            return f"Совпадение с БДУ ФСТЭК: {vuln['description']} (CVE: {vuln['cve_id']})"
     return "Совпадений с БДУ ФСТЭК не найдено"
 
 def update_fstec_db():
     st.subheader("Обновление БДУ ФСТЭК")
-    api_url = st.text_input("Введите API-адрес")
+    api_url = st.text_input("Введите API-адрес", "https://example.com/api/fstec")
 
     if st.button("Обновить базу"):
-        if not api_url.startswith("http"):
-            st.error("Ошибка: Неверный формат API-адреса.")
-            return
-
         try:
-            response = requests.get(api_url, timeout=10)
-            if response.status_code != 200:
-                st.error(f"Ошибка: Сервер вернул код {response.status_code}")
-                return
+            headers = {"Accept": "application/json"}
+            response = requests.get(api_url, headers=headers)
 
-            new_db = response.json()
-            if not isinstance(new_db, list):
-                st.error("Ошибка: Ожидался список уязвимостей в формате JSON.")
-                return
+            if response.status_code == 200:
+                try:
+                    new_db = response.json()
+                    if not isinstance(new_db, list):
+                        raise ValueError("Ожидался список уязвимостей в формате JSON.")
 
-            with open(FSTEC_DB_FILE, "w", encoding="utf-8") as file:
-                json.dump(new_db, file, indent=4, ensure_ascii=False)
+                    for vuln in new_db:
+                        vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
 
-            st.success("База ФСТЭК успешно обновлена!")
+                    json.dump(new_db, open(FSTEC_DB_FILE, "w", encoding="utf-8"), indent=4)
+                    st.success("База ФСТЭК обновлена!")
+                except json.JSONDecodeError:
+                    st.error("Ошибка: Неверный формат JSON в ответе сервера.")
+            elif response.status_code == 403:
+                st.error("Ошибка: Доступ запрещен (403). Проверьте API-ключ или права доступа.")
+            elif response.status_code == 404:
+                st.error("Ошибка: API не найден (404). Проверьте адрес.")
+            else:
+                st.error(f"Ошибка загрузки базы. Код ответа: {response.status_code}")
 
-        except requests.exceptions.RequestException as e:
-            st.error(f"Ошибка запроса к API: {e}")
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
 
 # === Интерфейс Streamlit ===
 def main():
@@ -182,7 +178,7 @@ def main():
     elif menu == "Эксплуатация":
         uploaded_file = st.file_uploader("Загрузите файл кода")
         if uploaded_file:
-            st.write("Результат анализа:", analyze_code_with_ml(uploaded_file.read().decode(errors="ignore")))
+            st.write("Результат анализа:", analyze_code_with_ml(uploaded_file.read().decode("utf-8")))
 
     elif menu == "Анализ кода":
         code_input = st.text_area("Введите код")
