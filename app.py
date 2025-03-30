@@ -4,7 +4,6 @@ import json
 import os
 import hashlib
 import requests
-import joblib
 
 try:
     import matplotlib.pyplot as plt
@@ -12,8 +11,9 @@ try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
+    import joblib
 except ImportError as e:
-    st.error(f"Ошибка импорта: {e}. Установите библиотеки: `pip install scikit-learn joblib matplotlib requests`")
+    st.error(f"Ошибка импорта: {e}. Установите библиотеки: `pip install scikit-learn joblib matplotlib`")
     st.stop()
 
 # === Файлы ===
@@ -24,7 +24,7 @@ FSTEC_DB_FILE = "fstec_db.json"
 DATASET_FILE = "vulnerability_dataset.csv"
 METRICS_FILE = "metrics.json"
 
-# === Функции пользователей ===
+# === Работа с пользователями ===
 def load_users():
     return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
@@ -52,6 +52,7 @@ def train_ml_model():
         st.error("Файл датасета не найден.")
         return
 
+    # Удаляем редкие классы (< 2 записей)
     class_counts = data["label"].value_counts()
     data = data[data["label"].isin(class_counts[class_counts >= 2].index)]
 
@@ -73,6 +74,7 @@ def train_ml_model():
     joblib.dump(model, ML_MODEL_FILE)
     joblib.dump(vectorizer, VECTOR_FILE)
 
+    # Оценка модели
     y_pred = model.predict(X_test_tfidf)
     precision = precision_score(y_test, y_pred)
     recall = recall_score(y_test, y_pred)
@@ -80,6 +82,7 @@ def train_ml_model():
 
     json.dump({"precision": precision, "recall": recall, "f1_score": f1}, open(METRICS_FILE, "w"))
 
+    # Визуализация Precision-Recall
     if model.n_classes_ > 1:
         precision_vals, recall_vals, _ = precision_recall_curve(y_test, model.predict_proba(X_test_tfidf)[:, 1])
         plt.figure()
@@ -94,13 +97,6 @@ def train_ml_model():
     st.success("Модель обучена и сохранена!")
 
 # === Анализ кода ===
-def load_ml_model():
-    try:
-        return joblib.load(ML_MODEL_FILE), joblib.load(VECTOR_FILE)
-    except FileNotFoundError:
-        st.error("Обученная модель не найдена.")
-        return None, None
-
 def analyze_code_with_ml(code_snippet):
     model, vectorizer = load_ml_model()
     if model is None:
@@ -109,7 +105,7 @@ def analyze_code_with_ml(code_snippet):
     vectorized_code = vectorizer.transform([code_snippet])
     return "Обнаружена уязвимость" if model.predict(vectorized_code)[0] == 1 else "Код безопасен"
 
-# === БД ФСТЭК ===
+# === Работа с БДУ ФСТЭК ===
 def load_fstec_db():
     return json.load(open(FSTEC_DB_FILE, "r", encoding="utf-8")) if os.path.exists(FSTEC_DB_FILE) else []
 
@@ -118,9 +114,10 @@ def compare_with_fstec(code_snippet):
     code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
     for vuln in fstec_db:
         if vuln.get("hash") == code_hash:
-            return f"Совпадение с БДУ ФСТЭК: {vuln['description']} (CVE: {vuln['cve_id']})"
+            return f"Совпадение с БДУ ФСТЭК: {vuln['description']}"
     return "Совпадений с БДУ ФСТЭК не найдено"
 
+# === Обновление БДУ ФСТЭК ===
 def update_fstec_db():
     st.subheader("Обновление БДУ ФСТЭК")
     api_url = st.text_input("Введите API-адрес", "https://example.com/api/fstec")
@@ -132,14 +129,26 @@ def update_fstec_db():
 
             if response.status_code == 200:
                 try:
-                    new_db = response.json()
-                    if not isinstance(new_db, list):
+                    json_data = response.json()
+
+                    # Если API возвращает объект, оборачиваем его в список
+                    if isinstance(json_data, dict):
+                        json_data = [json_data]
+
+                    if not isinstance(json_data, list):
                         raise ValueError("Ожидался список уязвимостей в формате JSON.")
 
-                    for vuln in new_db:
-                        vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
+                    for vuln in json_data:
+                        vuln_id = vuln.get("cve", {}).get("id", "Неизвестно")
+                        vuln_desc = vuln.get("cve", {}).get("descriptions", [{}])[0].get("value", "Описание отсутствует")
+                        vuln_severity = vuln.get("cve", {}).get("metrics", {}).get("cvssMetricV31", [{}])[0].get("cvssData", {}).get("baseSeverity", "Неизвестно")
 
-                    json.dump(new_db, open(FSTEC_DB_FILE, "w", encoding="utf-8"), indent=4)
+                        vuln["hash"] = hashlib.sha256(vuln_id.encode()).hexdigest()
+                        vuln["description"] = vuln_desc
+                        vuln["cve_id"] = vuln_id
+                        vuln["severity"] = vuln_severity
+
+                    json.dump(json_data, open(FSTEC_DB_FILE, "w", encoding="utf-8"), indent=4)
                     st.success("База ФСТЭК обновлена!")
                 except json.JSONDecodeError:
                     st.error("Ошибка: Неверный формат JSON в ответе сервера.")
@@ -190,3 +199,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
