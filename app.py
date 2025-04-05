@@ -5,16 +5,13 @@ import os
 import hashlib
 import requests
 import joblib
+import ast
 
-try:
-    import matplotlib.pyplot as plt
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import precision_score, recall_score, f1_score, precision_recall_curve
-except ImportError as e:
-    st.error(f"Ошибка импорта: {e}. Установите библиотеки: `pip install scikit-learn joblib matplotlib`")
-    st.stop()
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, f1_score
+
 
 # === Файлы ===
 USER_DB = "users.json"
@@ -52,12 +49,11 @@ def train_ml_model():
         st.error("Файл датасета не найден.")
         return
 
-    # Удаление редких классов
     class_counts = data["label"].value_counts()
     data = data[data["label"].isin(class_counts[class_counts >= 2].index)]
 
     if data["label"].nunique() < 2:
-        st.error("Ошибка: В датасете только один класс. Добавьте данные.")
+        st.error("Ошибка: В датасете только один класс.")
         return
     
     X_train, X_test, y_train, y_test = train_test_split(
@@ -74,15 +70,34 @@ def train_ml_model():
     joblib.dump(model, ML_MODEL_FILE)
     joblib.dump(vectorizer, VECTOR_FILE)
 
-    # Оценка модели
     y_pred = model.predict(X_test_tfidf)
-    precision = precision_score(y_test, y_pred, average='weighted')
-    recall = recall_score(y_test, y_pred, average='weighted')
-    f1 = f1_score(y_test, y_pred, average='weighted')
+    precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+    recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+    f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
 
     json.dump({"precision": precision, "recall": recall, "f1_score": f1}, open(METRICS_FILE, "w"))
-
     st.success("Модель обучена и сохранена!")
+
+# === Автоматическое дообучение ===
+def auto_retrain_model(new_code, label):
+    try:
+        df = pd.read_csv(DATASET_FILE)
+    except FileNotFoundError:
+        df = pd.DataFrame(columns=["code", "label"])
+
+    new_row = pd.DataFrame([[new_code, label]], columns=["code", "label"])
+    df = pd.concat([df, new_row], ignore_index=True)
+    df.to_csv(DATASET_FILE, index=False)
+
+    vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(df["code"])
+    y = df["label"]
+
+    model = RandomForestClassifier(n_estimators=100)
+    model.fit(X, y)
+
+    joblib.dump(model, ML_MODEL_FILE)
+    joblib.dump(vectorizer, VECTOR_FILE)
 
 # === Загрузка модели ===
 def load_ml_model():
@@ -97,9 +112,21 @@ def analyze_code_with_ml(code_snippet):
     model, vectorizer = load_ml_model()
     if model is None:
         return "Ошибка загрузки модели"
-    
     vectorized_code = vectorizer.transform([code_snippet])
-    return "Обнаружена уязвимость" if model.predict(vectorized_code)[0] == 1 else "Код безопасен"
+    prediction = model.predict(vectorized_code)[0]
+    return f"Обнаружена уязвимость: {prediction}" if prediction != "safe" else "Код безопасен"
+
+# === AST-анализ ===
+def analyze_code_with_ast(code_snippet):
+    try:
+        tree = ast.parse(code_snippet)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and hasattr(node.func, "id"):
+                if node.func.id == "eval":
+                    return "Обнаружено использование eval — потенциальная уязвимость"
+    except Exception as e:
+        return f"Ошибка AST-анализа: {e}"
+    return "AST-анализ: опасных конструкций не обнаружено"
 
 # === Работа с БДУ ФСТЭК ===
 def load_fstec_db():
@@ -114,24 +141,15 @@ def load_fstec_db():
 
 def compare_with_fstec(code_snippet):
     fstec_db = load_fstec_db()
-    code_lower = code_snippet.lower()
-
-    # Проверка по хэшу
     code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
+
     for vuln in fstec_db:
         if vuln.get("hash") == code_hash:
-            return f"**Совпадение с БДУ ФСТЭК найдено:**\n\n" \
-                   f"**Уязвимость:** {vuln['description']}\n" \
-                   f"**CVE:** {vuln['CVE']}\n" \
-                   f"**Серьезность:** {vuln['severity']}"
+            return f"**Совпадение с БДУ ФСТЭК найдено:**
 
-    # Проверка на SQL-инъекции по ключевым словам
-    sql_patterns = ["select * from", "union select", "drop table", "insert into", "update set", "delete from", "--", "' or '1'='1"]
-    for pattern in sql_patterns:
-        if pattern in code_lower:
-            return "**Обнаружена потенциальная уязвимость: SQL-инъекция**\n\n" \
-                   "❗ Этот код содержит SQL-запросы, которые могут быть уязвимы.\n" \
-                   "**Рекомендация:** Используйте параметризованные запросы для безопасности."
+"                    f"**Уязвимость:** {vuln['description']}
+"                    f"**CVE:** {vuln['CVE']}
+"                    f"**Серьезность:** {vuln['severity']}"
 
     return "Совпадений с БДУ ФСТЭК не найдено"
 
@@ -144,7 +162,7 @@ def update_fstec_db():
             response = requests.get(api_url)
             if response.status_code == 200:
                 new_db = response.json()
-                if isinstance(new_db, list):  # Проверка, что API вернул список
+                if isinstance(new_db, list):
                     for vuln in new_db:
                         if "pattern" in vuln:
                             vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
@@ -174,7 +192,11 @@ def main():
             st.success(register_user(username, password))
 
         if choice == "Вход" and st.button("Войти"):
-            st.success("Успешный вход") if login_user(username, password) else st.error("Неверные данные")
+            if login_user(username, password):
+                st.session_state["logged_in"] = True
+                st.success("Успешный вход")
+            else:
+                st.error("Неверные данные")
 
     elif menu == "Обучение":
         train_ml_model()
@@ -182,12 +204,22 @@ def main():
     elif menu == "Эксплуатация":
         uploaded_file = st.file_uploader("Загрузите файл кода")
         if uploaded_file:
-            st.write("Результат анализа:", analyze_code_with_ml(uploaded_file.read().decode("utf-8")))
+            code = uploaded_file.read().decode("utf-8")
+            st.write("ML-анализ:", analyze_code_with_ml(code))
+            st.write("AST-анализ:", analyze_code_with_ast(code))
 
     elif menu == "Анализ кода":
         code_input = st.text_area("Введите код")
         if st.button("Анализировать"):
-            st.write("Результат:", compare_with_fstec(code_input))
+            st.write("ML-анализ:", analyze_code_with_ml(code_input))
+            st.write("AST-анализ:", analyze_code_with_ast(code_input))
+            st.write("Сравнение с БДУ ФСТЭК:", compare_with_fstec(code_input))
+
+            if st.checkbox("Добавить как новый обучающий пример"):
+                label = st.text_input("Введите метку (например, sql_injection, xss, safe и т.д.):")
+                if st.button("Добавить в датасет и переобучить"):
+                    auto_retrain_model(code_input, label)
+                    st.success("Добавлено и дообучено.")
 
     elif menu == "Обновление ФСТЭК":
         update_fstec_db()
