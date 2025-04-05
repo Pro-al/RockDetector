@@ -145,11 +145,11 @@ def compare_with_fstec(code_snippet):
 
     for vuln in fstec_db:
         if vuln.get("hash") == code_hash:
-            return f"**Совпадение с БДУ ФСТЭК найдено:**
+            return f"""**Совпадение с БДУ ФСТЭК найдено:**
 
-"                    f"**Уязвимость:** {vuln['description']}
-"                    f"**CVE:** {vuln['CVE']}
-"                    f"**Серьезность:** {vuln['severity']}"
+**Уязвимость:** {vuln['description']}
+**CVE:** {vuln['CVE']}
+**Серьезность:** {vuln['severity']}"""
 
     return "Совпадений с БДУ ФСТЭК не найдено"
 
