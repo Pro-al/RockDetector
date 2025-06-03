@@ -195,24 +195,38 @@ def main():
                 st.write(f"Recall: {result[1]:.4f}")
                 st.write(f"F1-score: {result[2]:.4f}")
 
-    elif menu == "Эксплуатация":
+        elif menu == "Эксплуатация":
         st.subheader("Анализ загруженного файла")
-        uploaded_file = st.file_uploader("Загрузите код (.py, .txt)", type=["py", "txt"])
-        if uploaded_file:
-            try:
-                content = uploaded_file.read().decode("utf-8")
-                label, result = analyze_code(content)
-                st.info(f"Результат анализа: {result}")
+        uploaded_file = st.file_uploader(
+            "Загрузите файл кода (поддерживаются .py, .txt, .csv, .html, .json, .xss, .php)", 
+            type=["py", "txt", "csv", "html", "json", "xss", "php"]
+        )
 
-                for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
-                    match = check_vulnerability_db(content, db_file, db_label)
-                    if match:
-                        st.write(f"🔍 Совпадение в базе {match['label']}:")
-                        st.write(f"- **Описание:** {match['description']}")
-                        st.write(f"- **CVE:** {match['CVE']}")
-                        st.write(f"- **Серьезность:** {match['severity']}")
+        if uploaded_file is not None:
+            try:
+                file_bytes = uploaded_file.read()
+                try:
+                    content = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    content = file_bytes.decode("latin-1")  # fallback
+
+                if not content.strip():
+                    st.warning("Файл пустой.")
+                else:
+                    st.success("Файл успешно загружен и прочитан.")
+                    label, result = analyze_code(content)
+                    st.info(f"Результат анализа: {result}")
+
+                    for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
+                        match = check_vulnerability_db(content, db_file, db_label)
+                        if match:
+                            st.write(f"🔍 Совпадение в базе {match['label']}:")
+                            st.write(f"- **Описание:** {match['description']}")
+                            st.write(f"- **CVE:** {match['CVE']}")
+                            st.write(f"- **Серьезность:** {match['severity']}")
             except Exception as e:
-                st.error(f"Ошибка обработки файла: {e}")
+                st.error(f"Ошибка при чтении файла: {e}")
+
 
     elif menu == "Анализ кода":
         st.subheader("Ручной анализ")
