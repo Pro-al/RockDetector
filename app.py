@@ -195,7 +195,7 @@ def main():
                 st.write(f"Recall: {result[1]:.4f}")
                 st.write(f"F1-score: {result[2]:.4f}")
 
-            elif menu == "Эксплуатация":
+        elif menu == "Эксплуатация":
         st.subheader("Анализ загруженного файла")
         uploaded_file = st.file_uploader(
             "Загрузите файл кода (поддерживаются .py, .txt, .csv, .html, .json, .xss, .php)", 
@@ -226,7 +226,7 @@ def main():
                             st.write(f"- **Серьезность:** {match['severity']}")
             except Exception as e:
                 st.error(f"Ошибка при чтении файла: {e}")
-
+   
     elif menu == "Анализ кода":
         st.subheader("Ручной анализ")
         code_input = st.text_area("Введите код")
