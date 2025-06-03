@@ -227,7 +227,6 @@ def main():
             except Exception as e:
                 st.error(f"Ошибка при чтении файла: {e}")
 
-
     elif menu == "Анализ кода":
         st.subheader("Ручной анализ")
         code_input = st.text_area("Введите код")
