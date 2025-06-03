@@ -4,11 +4,17 @@ import os
 import json
 import joblib
 import hashlib
+import matplotlib.pyplot as plt
+from datetime import datetime
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score
-from datetime import datetime
+from sklearn.metrics import (
+    precision_score,
+    recall_score,
+    f1_score,
+    precision_recall_curve
+)
 
 # === Пути к файлам ===
 USER_DB = "users.json"
@@ -18,8 +24,9 @@ DATASET_FILE = "vulnerability_dataset.csv"
 METRICS_FILE = "metrics.json"
 RETRAIN_METRICS_FILE = "retrain_metrics.json"
 FSTEC_DB_FILE = "fstec_db.json"
+MITRE_DB_FILE = "mitre_db.json"
 
-# === Работа с пользователями ===
+# === Пользователи ===
 def load_users():
     return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
@@ -39,7 +46,7 @@ def login_user(username, password):
     return username in users and users[username] == hashlib.sha256(password.encode()).hexdigest()
 
 # === Обучение модели ===
-def train_model(save_to=METRICS_FILE):
+def train_model(save_to, plot_title):
     try:
         data = pd.read_csv(DATASET_FILE)
     except FileNotFoundError:
@@ -68,9 +75,11 @@ def train_model(save_to=METRICS_FILE):
     joblib.dump(vectorizer, VECTOR_FILE)
 
     y_pred = model.predict(X_test_vec)
-    precision = precision_score(y_test, y_pred, average='weighted')
-    recall = recall_score(y_test, y_pred, average='weighted')
-    f1 = f1_score(y_test, y_pred, average='weighted')
+    y_proba = model.predict_proba(X_test_vec)
+
+    precision = precision_score(y_test, y_pred, average="weighted")
+    recall = recall_score(y_test, y_pred, average="weighted")
+    f1 = f1_score(y_test, y_pred, average="weighted")
 
     json.dump({
         "precision": precision,
@@ -78,6 +87,19 @@ def train_model(save_to=METRICS_FILE):
         "f1_score": f1,
         "timestamp": datetime.now().isoformat()
     }, open(save_to, "w"))
+
+    # === Визуализация Precision-Recall
+    try:
+        pos_class_idx = list(model.classes_).index(1)
+        precision_vals, recall_vals, _ = precision_recall_curve(y_test, y_proba[:, pos_class_idx])
+        plt.figure(figsize=(6, 4))
+        plt.plot(recall_vals, precision_vals, label="PR Curve")
+        plt.title(f'Precision-Recall Curve ({plot_title})')
+        plt.xlabel("Recall")
+        plt.ylabel("Precision")
+        st.pyplot(plt)
+    except:
+        st.warning("Не удалось построить график PR. Вероятно, классы не бинарные.")
 
     return precision, recall, f1
 
@@ -96,39 +118,42 @@ def load_model():
 # === Анализ кода ===
 def analyze_code(code_snippet):
     model, vectorizer = load_model()
-    if model is None:
-        return "Модель не загружена. Пожалуйста, выполните обучение."
-    vectorized = vectorizer.transform([code_snippet])
-    result = model.predict(vectorized)[0]
-    return "Обнаружена уязвимость" if result == 1 else "Код безопасен"
+    if model is None or vectorizer is None:
+        return None, "Модель не загружена."
 
-# === Сравнение с базой ФСТЭК ===
-def load_fstec_db():
-    if not os.path.exists(FSTEC_DB_FILE):
-        return []
     try:
-        return json.load(open(FSTEC_DB_FILE, "r", encoding="utf-8"))
-    except json.JSONDecodeError:
-        st.error("Ошибка чтения базы ФСТЭК. Проверьте формат JSON.")
-        return []
+        vectorized = vectorizer.transform([code_snippet])
+        prediction = model.predict(vectorized)[0]
+        return prediction, "Обнаружена уязвимость" if str(prediction) == "1" else "Код безопасен"
+    except Exception as e:
+        return None, f"Ошибка анализа: {e}"
 
-def check_fstec(code_snippet):
-    db = load_fstec_db()
-    hash_value = hashlib.sha256(code_snippet.encode()).hexdigest()
-    for item in db:
-        if item.get("hash") == hash_value:
+# === Проверка в БД ФСТЭК и MITRE ===
+def check_vulnerability_db(code_snippet, db_file, label):
+    if not os.path.exists(db_file):
+        return None
+
+    try:
+        data = json.load(open(db_file, "r", encoding="utf-8"))
+    except:
+        return None
+
+    code_hash = hashlib.sha256(code_snippet.encode()).hexdigest()
+    for entry in data:
+        if entry.get("hash") == code_hash:
             return {
-                "description": item.get("description", "нет описания"),
-                "CVE": item.get("CVE", "не указано"),
-                "severity": item.get("severity", "не указано")
+                "label": label,
+                "description": entry.get("description", ""),
+                "CVE": entry.get("CVE", "не указано"),
+                "severity": entry.get("severity", "не указано")
             }
     return None
 
-# === Интерфейс Streamlit ===
+# === Интерфейс ===
 def main():
-    st.title("Система анализа уязвимостей")
+    st.title("Система автоматического анализа уязвимостей")
 
-    menu = st.sidebar.radio("Меню", [
+    menu = st.sidebar.radio("Выберите модуль", [
         "Администрирование",
         "Обучение",
         "Дообучение",
@@ -152,79 +177,77 @@ def main():
 
     elif menu == "Обучение":
         st.subheader("Обучение модели")
-        if st.button("Обучить"):
-            result = train_model(METRICS_FILE)
+        if st.button("Обучить модель"):
+            result = train_model(METRICS_FILE, "Обучение")
             if result:
                 st.success("Обучение завершено")
-                st.write(f"**Precision:** {result[0]:.4f}")
-                st.write(f"**Recall:** {result[1]:.4f}")
-                st.write(f"**F1-score:** {result[2]:.4f}")
+                st.write(f"Precision: {result[0]:.4f}")
+                st.write(f"Recall: {result[1]:.4f}")
+                st.write(f"F1-score: {result[2]:.4f}")
 
     elif menu == "Дообучение":
         st.subheader("Дообучение модели")
-        if st.button("Дообучить"):
-            result = train_model(RETRAIN_METRICS_FILE)
+        if st.button("Запустить дообучение"):
+            result = train_model(RETRAIN_METRICS_FILE, "Дообучение")
             if result:
                 st.success("Дообучение завершено")
-                st.write(f"**Precision:** {result[0]:.4f}")
-                st.write(f"**Recall:** {result[1]:.4f}")
-                st.write(f"**F1-score:** {result[2]:.4f}")
+                st.write(f"Precision: {result[0]:.4f}")
+                st.write(f"Recall: {result[1]:.4f}")
+                st.write(f"F1-score: {result[2]:.4f}")
 
     elif menu == "Эксплуатация":
-        st.subheader("Проверка кода")
-        uploaded = st.file_uploader("Загрузите файл кода (.py, .txt)", type=["py", "txt"])
-        if uploaded:
+        st.subheader("Анализ загруженного файла")
+        uploaded_file = st.file_uploader("Загрузите код (.py, .txt)", type=["py", "txt"])
+        if uploaded_file:
             try:
-                content = uploaded.read().decode("utf-8")
-                result = analyze_code(content)
-                st.write("**Результат анализа:**")
-                st.info(result)
+                content = uploaded_file.read().decode("utf-8")
+                label, result = analyze_code(content)
+                st.info(f"Результат анализа: {result}")
 
-                match = check_fstec(content)
-                if match:
-                    st.write("**Найдено совпадение в базе ФСТЭК:**")
-                    st.write(f"- **Описание:** {match['description']}")
-                    st.write(f"- **CVE:** {match['CVE']}")
-                    st.write(f"- **Серьёзность:** {match['severity']}")
-                else:
-                    st.write("Совпадений в базе ФСТЭК не найдено.")
+                for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
+                    match = check_vulnerability_db(content, db_file, db_label)
+                    if match:
+                        st.write(f"🔍 Совпадение в базе {match['label']}:")
+                        st.write(f"- **Описание:** {match['description']}")
+                        st.write(f"- **CVE:** {match['CVE']}")
+                        st.write(f"- **Серьезность:** {match['severity']}")
             except Exception as e:
-                st.error(f"Ошибка чтения файла: {e}")
+                st.error(f"Ошибка обработки файла: {e}")
 
     elif menu == "Анализ кода":
-        st.subheader("Ввод кода вручную")
-        code_input = st.text_area("Введите фрагмент кода")
+        st.subheader("Ручной анализ")
+        code_input = st.text_area("Введите код")
         if st.button("Анализировать"):
-            result = analyze_code(code_input)
+            label, result = analyze_code(code_input)
             st.info(result)
-
-            match = check_fstec(code_input)
-            if match:
-                st.write("**Совпадение в базе ФСТЭК:**")
-                st.write(f"- **Описание:** {match['description']}")
-                st.write(f"- **CVE:** {match['CVE']}")
-                st.write(f"- **Серьёзность:** {match['severity']}")
-            else:
-                st.write("Совпадений в базе ФСТЭК не найдено.")
+            for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
+                match = check_vulnerability_db(code_input, db_file, db_label)
+                if match:
+                    st.write(f"🔍 Совпадение в базе {match['label']}:")
+                    st.write(f"- **Описание:** {match['description']}")
+                    st.write(f"- **CVE:** {match['CVE']}")
+                    st.write(f"- **Серьезность:** {match['severity']}")
 
     elif menu == "Метрики":
         st.subheader("Метрики обучения")
         if os.path.exists(METRICS_FILE):
-            metrics = json.load(open(METRICS_FILE))
-            st.write(f"**Точность (Precision):** {metrics['precision']:.4f}")
-            st.write(f"**Полнота (Recall):** {metrics['recall']:.4f}")
-            st.write(f"**F1-score:** {metrics['f1_score']:.4f}")
+            m = json.load(open(METRICS_FILE))
+            st.write(f"**Precision:** {m['precision']:.4f}")
+            st.write(f"**Recall:** {m['recall']:.4f}")
+            st.write(f"**F1-score:** {m['f1_score']:.4f}")
+            st.write(f"_Дата: {m.get('timestamp', '')}_")
         else:
             st.info("Модель ещё не обучена.")
 
-        st.subheader("Метрики после дообучения")
+        st.subheader("Метрики дообучения")
         if os.path.exists(RETRAIN_METRICS_FILE):
-            metrics = json.load(open(RETRAIN_METRICS_FILE))
-            st.write(f"**Точность (Precision):** {metrics['precision']:.4f}")
-            st.write(f"**Полнота (Recall):** {metrics['recall']:.4f}")
-            st.write(f"**F1-score:** {metrics['f1_score']:.4f}")
+            m = json.load(open(RETRAIN_METRICS_FILE))
+            st.write(f"**Precision:** {m['precision']:.4f}")
+            st.write(f"**Recall:** {m['recall']:.4f}")
+            st.write(f"**F1-score:** {m['f1_score']:.4f}")
+            st.write(f"_Дата: {m.get('timestamp', '')}_")
         else:
-            st.info("Дообучение ещё не производилось.")
+            st.info("Дообучение не выполнялось.")
 
 if __name__ == "__main__":
     main()
