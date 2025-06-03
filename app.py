@@ -215,15 +215,19 @@ def main():
                 else:
                     st.success("Файл прочитан.")
                     label, result = analyze_code(content)
-                    st.info(result)
+                    st.info(f"🛡️ Результат анализа: {result}")
 
+                    found = False
                     for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
                         match = check_vulnerability_db(content, db_file, db_label)
                         if match:
-                            st.write(f"🔍 Совпадение в базе {match['label']}:")
+                            found = True
+                            st.success(f"🔍 Уязвимость обнаружена в базе {db_label}:")
                             st.write(f"- **Описание:** {match['description']}")
                             st.write(f"- **CVE:** {match['CVE']}")
                             st.write(f"- **Серьезность:** {match['severity']}")
+                    if not found:
+                        st.warning("Совпадений в базе ФСТЭК и MITRE не найдено.")
             except Exception as e:
                 st.error(f"Ошибка при чтении файла: {e}")
 
@@ -232,14 +236,19 @@ def main():
         code_input = st.text_area("Введите фрагмент кода")
         if st.button("Анализировать"):
             label, result = analyze_code(code_input)
-            st.info(result)
+            st.info(f"🛡️ Результат анализа: {result}")
+
+            found = False
             for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
                 match = check_vulnerability_db(code_input, db_file, db_label)
                 if match:
-                    st.write(f"🔍 Совпадение в базе {match['label']}:")
+                    found = True
+                    st.success(f"🔍 Уязвимость обнаружена в базе {db_label}:")
                     st.write(f"- **Описание:** {match['description']}")
                     st.write(f"- **CVE:** {match['CVE']}")
                     st.write(f"- **Серьезность:** {match['severity']}")
+            if not found:
+                st.warning("Совпадений в базе ФСТЭК и MITRE не найдено.")
 
     elif menu == "Метрики":
         st.subheader("Метрики обучения")
