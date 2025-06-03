@@ -26,7 +26,7 @@ RETRAIN_METRICS_FILE = "retrain_metrics.json"
 FSTEC_DB_FILE = "fstec_db.json"
 MITRE_DB_FILE = "mitre_db.json"
 
-# === Пользователи ===
+# === Работа с пользователями ===
 def load_users():
     return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
@@ -128,7 +128,7 @@ def analyze_code(code_snippet):
     except Exception as e:
         return None, f"Ошибка анализа: {e}"
 
-# === Проверка в БД ФСТЭК и MITRE ===
+# === Проверка баз (ФСТЭК, MITRE) ===
 def check_vulnerability_db(code_snippet, db_file, label):
     if not os.path.exists(db_file):
         return None
@@ -149,9 +149,9 @@ def check_vulnerability_db(code_snippet, db_file, label):
             }
     return None
 
-# === Интерфейс ===
+# === Интерфейс Streamlit ===
 def main():
-    st.title("Система автоматического анализа уязвимостей")
+    st.title("Система анализа уязвимостей")
 
     menu = st.sidebar.radio("Выберите модуль", [
         "Администрирование",
@@ -195,11 +195,11 @@ def main():
                 st.write(f"Recall: {result[1]:.4f}")
                 st.write(f"F1-score: {result[2]:.4f}")
 
-        elif menu == "Эксплуатация":
+    elif menu == "Эксплуатация":
         st.subheader("Анализ загруженного файла")
         uploaded_file = st.file_uploader(
-            "Загрузите файл кода (поддерживаются .py, .txt, .csv, .html, .json, .xss, .php)", 
-            type=["py", "txt", "csv", "html", "json", "xss", "php"]
+            "Загрузите файл (.py, .txt, .csv, .html, .xss, .json, .php)", 
+            type=["py", "txt", "csv", "html", "xss", "json", "php"]
         )
 
         if uploaded_file is not None:
@@ -213,9 +213,9 @@ def main():
                 if not content.strip():
                     st.warning("Файл пустой.")
                 else:
-                    st.success("Файл успешно загружен и прочитан.")
+                    st.success("Файл прочитан.")
                     label, result = analyze_code(content)
-                    st.info(f"Результат анализа: {result}")
+                    st.info(result)
 
                     for db_file, db_label in [(FSTEC_DB_FILE, "ФСТЭК"), (MITRE_DB_FILE, "MITRE")]:
                         match = check_vulnerability_db(content, db_file, db_label)
@@ -226,10 +226,10 @@ def main():
                             st.write(f"- **Серьезность:** {match['severity']}")
             except Exception as e:
                 st.error(f"Ошибка при чтении файла: {e}")
-   
+
     elif menu == "Анализ кода":
         st.subheader("Ручной анализ")
-        code_input = st.text_area("Введите код")
+        code_input = st.text_area("Введите фрагмент кода")
         if st.button("Анализировать"):
             label, result = analyze_code(code_input)
             st.info(result)
