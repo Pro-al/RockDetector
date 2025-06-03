@@ -1,27 +1,25 @@
 import streamlit as st
 import pandas as pd
-import json
 import os
-import hashlib
-import requests
+import json
 import joblib
+import hashlib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_score, recall_score, f1_score
+from datetime import datetime
 
-
-# === Константы ===
+# === Пути к файлам ===
 USER_DB = "users.json"
 ML_MODEL_FILE = "ml_model.pkl"
 VECTOR_FILE = "vectorizer.pkl"
 DATASET_FILE = "vulnerability_dataset.csv"
 METRICS_FILE = "metrics.json"
-TRAINING_LOG_FILE = "training_log.txt"
+RETRAIN_METRICS_FILE = "retrain_metrics.json"
 FSTEC_DB_FILE = "fstec_db.json"
-MITRE_DB_FILE = "mitre_db.json"
 
-# === Пользователи ===
+# === Работа с пользователями ===
 def load_users():
     return json.load(open(USER_DB, "r", encoding="utf-8")) if os.path.exists(USER_DB) else {}
 
@@ -40,56 +38,52 @@ def login_user(username, password):
     users = load_users()
     return username in users and users[username] == hashlib.sha256(password.encode()).hexdigest()
 
-
 # === Обучение модели ===
-def train_ml_model():
-    st.subheader("Обучение модели")
+def train_model(save_to=METRICS_FILE):
     try:
         data = pd.read_csv(DATASET_FILE)
     except FileNotFoundError:
-        st.error("Файл датасета не найден.")
-        return
+        st.error("Файл с датасетом не найден.")
+        return None
 
     class_counts = data["label"].value_counts()
     data = data[data["label"].isin(class_counts[class_counts >= 2].index)]
+
     if data["label"].nunique() < 2:
-        st.error("Недостаточно классов.")
-        return
+        st.error("Недостаточно различных классов в данных.")
+        return None
 
     X_train, X_test, y_train, y_test = train_test_split(
         data["code"], data["label"], test_size=0.2, stratify=data["label"], random_state=42
     )
 
     vectorizer = TfidfVectorizer()
-    X_train_tfidf = vectorizer.fit_transform(X_train)
-    X_test_tfidf = vectorizer.transform(X_test)
+    X_train_vec = vectorizer.fit_transform(X_train)
+    X_test_vec = vectorizer.transform(X_test)
 
     model = RandomForestClassifier(n_estimators=100)
-    model.fit(X_train_tfidf, y_train)
+    model.fit(X_train_vec, y_train)
 
     joblib.dump(model, ML_MODEL_FILE)
     joblib.dump(vectorizer, VECTOR_FILE)
 
-    y_pred = model.predict(X_test_tfidf)
+    y_pred = model.predict(X_test_vec)
     precision = precision_score(y_test, y_pred, average='weighted')
     recall = recall_score(y_test, y_pred, average='weighted')
     f1 = f1_score(y_test, y_pred, average='weighted')
 
-    json.dump({"precision": precision, "recall": recall, "f1_score": f1}, open(METRICS_FILE, "w"))
+    json.dump({
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
+        "timestamp": datetime.now().isoformat()
+    }, open(save_to, "w"))
 
-    with open(TRAINING_LOG_FILE, "a") as log:
-        log.write(f"Обучение: precision={precision}, recall={recall}, f1={f1}\n")
+    return precision, recall, f1
 
-    st.success("Модель обучена!")
-    st.write(f"**Precision:** {precision:.4f}")
-    st.write(f"**Recall:** {recall:.4f}")
-    st.write(f"**F1-score:** {f1:.4f}")
-
-
-# === Загрузка модели (безопасно) ===
-def load_ml_model():
+# === Загрузка модели ===
+def load_model():
     if not os.path.exists(ML_MODEL_FILE) or not os.path.exists(VECTOR_FILE):
-        st.error("Файл модели или векторизатора не найден. Сначала обучите модель.")
         return None, None
     try:
         model = joblib.load(ML_MODEL_FILE)
@@ -99,145 +93,138 @@ def load_ml_model():
         st.error(f"Ошибка загрузки модели: {e}")
         return None, None
 
-
 # === Анализ кода ===
-def analyze_code_with_ml(code_snippet):
-    model, vectorizer = load_ml_model()
-    if model is None or vectorizer is None:
-        return "Модель не загружена. Обучите модель."
-    try:
-        vectorized = vectorizer.transform([code_snippet])
-        return "Обнаружена уязвимость" if model.predict(vectorized)[0] == 1 else "Код безопасен"
-    except Exception as e:
-        return f"Ошибка при анализе: {e}"
+def analyze_code(code_snippet):
+    model, vectorizer = load_model()
+    if model is None:
+        return "Модель не загружена. Пожалуйста, выполните обучение."
+    vectorized = vectorizer.transform([code_snippet])
+    result = model.predict(vectorized)[0]
+    return "Обнаружена уязвимость" if result == 1 else "Код безопасен"
 
-
-# === Работа с ФСТЭК ===
+# === Сравнение с базой ФСТЭК ===
 def load_fstec_db():
-    if os.path.exists(FSTEC_DB_FILE):
-        with open(FSTEC_DB_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except:
-                st.error("Ошибка чтения базы ФСТЭК.")
-    return []
+    if not os.path.exists(FSTEC_DB_FILE):
+        return []
+    try:
+        return json.load(open(FSTEC_DB_FILE, "r", encoding="utf-8"))
+    except json.JSONDecodeError:
+        st.error("Ошибка чтения базы ФСТЭК. Проверьте формат JSON.")
+        return []
 
-def update_fstec_db():
-    st.subheader("Обновление БДУ ФСТЭК")
-    api_url = st.text_input("Введите API-адрес для обновления")
-    if st.button("Обновить базу"):
-        try:
-            response = requests.get(api_url)
-            if response.status_code == 200:
-                new_db = response.json()
-                if isinstance(new_db, list):
-                    for vuln in new_db:
-                        if "pattern" in vuln:
-                            vuln["hash"] = hashlib.sha256(vuln["pattern"].encode()).hexdigest()
-                    with open(FSTEC_DB_FILE, "w", encoding="utf-8") as f:
-                        json.dump(new_db, f, indent=4)
-                    st.success("База ФСТЭК успешно обновлена.")
-                else:
-                    st.error("Ожидался список уязвимостей.")
-            else:
-                st.error(f"Ошибка от сервера: код {response.status_code}")
-        except Exception as e:
-            st.error(f"Ошибка запроса: {e}")
-
-def add_mitre_entry():
-    st.subheader("Добавить MITRE-уязвимость вручную")
-    mitre_id = st.text_input("MITRE ID (например, CWE-89)")
-    name = st.text_input("Название уязвимости")
-    description = st.text_area("Описание")
-    severity = st.selectbox("Уровень критичности", ["Low", "Medium", "High", "Critical"])
-
-    if st.button("Добавить в базу MITRE"):
-        entry = {
-            "id": mitre_id,
-            "name": name,
-            "description": description,
-            "severity": severity
-        }
-        mitre_db = []
-        if os.path.exists(MITRE_DB_FILE):
-            try:
-                mitre_db = json.load(open(MITRE_DB_FILE, "r", encoding="utf-8"))
-            except:
-                pass
-        mitre_db.append(entry)
-        with open(MITRE_DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(mitre_db, f, indent=4, ensure_ascii=False)
-        st.success("Запись успешно добавлена в базу MITRE.")
-
+def check_fstec(code_snippet):
+    db = load_fstec_db()
+    hash_value = hashlib.sha256(code_snippet.encode()).hexdigest()
+    for item in db:
+        if item.get("hash") == hash_value:
+            return {
+                "description": item.get("description", "нет описания"),
+                "CVE": item.get("CVE", "не указано"),
+                "severity": item.get("severity", "не указано")
+            }
+    return None
 
 # === Интерфейс Streamlit ===
 def main():
     st.title("Система анализа уязвимостей")
 
-    menu = st.sidebar.radio("Выберите модуль", [
-        "Администрирование", 
-        "Обучение", 
-        "Эксплуатация", 
-        "Обновление ФСТЭК / MITRE", 
+    menu = st.sidebar.radio("Меню", [
+        "Администрирование",
+        "Обучение",
+        "Дообучение",
+        "Эксплуатация",
+        "Анализ кода",
         "Метрики"
     ])
 
     if menu == "Администрирование":
         st.subheader("Управление пользователями")
         action = st.radio("Выберите действие", ["Вход", "Регистрация"])
-        login = st.text_input("Логин")
+        username = st.text_input("Логин")
         password = st.text_input("Пароль", type="password")
         if action == "Регистрация" and st.button("Зарегистрироваться"):
-            st.success(register_user(login, password))
+            st.success(register_user(username, password))
         if action == "Вход" and st.button("Войти"):
-            if login_user(login, password):
+            if login_user(username, password):
                 st.success("Успешный вход")
             else:
-                st.error("Неверный логин или пароль")
+                st.error("Неверные данные")
 
     elif menu == "Обучение":
-        st.subheader("Модуль обучения")
-        if st.button("Обучить с нуля"):
-            train_ml_model()
+        st.subheader("Обучение модели")
+        if st.button("Обучить"):
+            result = train_model(METRICS_FILE)
+            if result:
+                st.success("Обучение завершено")
+                st.write(f"**Precision:** {result[0]:.4f}")
+                st.write(f"**Recall:** {result[1]:.4f}")
+                st.write(f"**F1-score:** {result[2]:.4f}")
+
+    elif menu == "Дообучение":
+        st.subheader("Дообучение модели")
+        if st.button("Дообучить"):
+            result = train_model(RETRAIN_METRICS_FILE)
+            if result:
+                st.success("Дообучение завершено")
+                st.write(f"**Precision:** {result[0]:.4f}")
+                st.write(f"**Recall:** {result[1]:.4f}")
+                st.write(f"**F1-score:** {result[2]:.4f}")
 
     elif menu == "Эксплуатация":
-        st.subheader("Модуль эксплуатации")
-        if "uploaded_code" not in st.session_state:
-            st.session_state.uploaded_code = None
-
-        uploaded_file = st.file_uploader("Загрузите .py или .txt файл", type=["py", "txt"])
-        if uploaded_file:
+        st.subheader("Проверка кода")
+        uploaded = st.file_uploader("Загрузите файл кода (.py, .txt)", type=["py", "txt"])
+        if uploaded:
             try:
-                content = uploaded_file.read().decode("utf-8")
-                st.session_state.uploaded_code = content
-                st.success("Файл загружен.")
-            except UnicodeDecodeError:
-                st.error("Ошибка: файл должен быть в кодировке UTF-8.")
+                content = uploaded.read().decode("utf-8")
+                result = analyze_code(content)
+                st.write("**Результат анализа:**")
+                st.info(result)
 
-        if st.session_state.uploaded_code:
-            result = analyze_code_with_ml(st.session_state.uploaded_code)
-            st.write("**Результат анализа:**")
+                match = check_fstec(content)
+                if match:
+                    st.write("**Найдено совпадение в базе ФСТЭК:**")
+                    st.write(f"- **Описание:** {match['description']}")
+                    st.write(f"- **CVE:** {match['CVE']}")
+                    st.write(f"- **Серьёзность:** {match['severity']}")
+                else:
+                    st.write("Совпадений в базе ФСТЭК не найдено.")
+            except Exception as e:
+                st.error(f"Ошибка чтения файла: {e}")
+
+    elif menu == "Анализ кода":
+        st.subheader("Ввод кода вручную")
+        code_input = st.text_area("Введите фрагмент кода")
+        if st.button("Анализировать"):
+            result = analyze_code(code_input)
             st.info(result)
 
-            if st.button("Анализировать другой файл"):
-                st.session_state.uploaded_code = None
-                st.experimental_rerun()
-
-    elif menu == "Обновление ФСТЭК / MITRE":
-        update_fstec_db()
-        st.markdown("---")
-        add_mitre_entry()
+            match = check_fstec(code_input)
+            if match:
+                st.write("**Совпадение в базе ФСТЭК:**")
+                st.write(f"- **Описание:** {match['description']}")
+                st.write(f"- **CVE:** {match['CVE']}")
+                st.write(f"- **Серьёзность:** {match['severity']}")
+            else:
+                st.write("Совпадений в базе ФСТЭК не найдено.")
 
     elif menu == "Метрики":
-        st.subheader("Метрики модели")
+        st.subheader("Метрики обучения")
         if os.path.exists(METRICS_FILE):
-            with open(METRICS_FILE, "r") as f:
-                metrics = json.load(f)
-            st.write(f"**Precision:** {metrics['precision']:.4f}")
-            st.write(f"**Recall:** {metrics['recall']:.4f}")
+            metrics = json.load(open(METRICS_FILE))
+            st.write(f"**Точность (Precision):** {metrics['precision']:.4f}")
+            st.write(f"**Полнота (Recall):** {metrics['recall']:.4f}")
             st.write(f"**F1-score:** {metrics['f1_score']:.4f}")
         else:
-            st.info("Метрики ещё не сохранены. Обучите модель.")
+            st.info("Модель ещё не обучена.")
+
+        st.subheader("Метрики после дообучения")
+        if os.path.exists(RETRAIN_METRICS_FILE):
+            metrics = json.load(open(RETRAIN_METRICS_FILE))
+            st.write(f"**Точность (Precision):** {metrics['precision']:.4f}")
+            st.write(f"**Полнота (Recall):** {metrics['recall']:.4f}")
+            st.write(f"**F1-score:** {metrics['f1_score']:.4f}")
+        else:
+            st.info("Дообучение ещё не производилось.")
 
 if __name__ == "__main__":
     main()
